@@ -80,6 +80,19 @@ const EnhancedSnapshotSchema = z.object({
   }),
 });
 
+// Type definitions for element data
+interface ElementData {
+  tag: string;
+  text?: string;
+  selector: string;
+  id?: string;
+  classes?: string;
+  type?: string;
+  role?: string;
+  ariaLabel?: string;
+  [key: string]: string | undefined;
+}
+
 // Storage for learned selectors (in-memory for now)
 const learnedSelectors = new Map<
   string,
@@ -89,6 +102,39 @@ const learnedSelectors = new Map<
 // Export getter for resource access
 export function getLearnedSelectorsMap() {
   return learnedSelectors;
+}
+
+// Helper function to format element text
+function formatElementText(
+  elements: ElementData[],
+  includeDetails: boolean = true,
+): string {
+  let text = "";
+
+  if (elements.length === 0) {
+    return "No interactive elements found.\n";
+  }
+
+  elements.forEach((el, index) => {
+    text += `${index + 1}. **${el.tag || "element"}**`;
+    if (el.text) {
+      const truncated = el.text.substring(0, 50);
+      text += ` - "${truncated}${el.text.length > 50 ? "..." : ""}"`;
+    }
+    
+    if (includeDetails) {
+      text += `\n   - CSS Selector: \`${el.selector}\``;
+      if (el.id) text += `\n   - ID: ${el.id}`;
+      if (el.classes) text += `\n   - Classes: ${el.classes}`;
+      if (el.type) text += `\n   - Type: ${el.type}`;
+      if (el.role) text += `\n   - Role: ${el.role}`;
+    } else {
+      text += ` (\`${el.selector}\`)`;
+    }
+    text += `\n`;
+  });
+
+  return text;
 }
 
 export const enumerateElements: Tool = {
@@ -102,29 +148,21 @@ export const enumerateElements: Tool = {
       EnumerateElementsSchema.shape.arguments.parse(params);
 
     // Send message to browser extension to enumerate elements
-    const elements = await context.sendSocketMessage("browser_enumerate_elements", {
+    const rawElements = await context.sendSocketMessage("browser_enumerate_elements", {
       includeHidden: validatedParams.includeHidden ?? false,
     });
 
     // Format the elements as a numbered list
     let text = "## Enumerated Interactive Elements\n\n";
     
-    if (Array.isArray(elements) && elements.length > 0) {
-      elements.forEach((el: any, index: number) => {
-        text += `${index + 1}. **${el.tag || "element"}**`;
-        if (el.text) {
-          text += ` - "${el.text.substring(0, 50)}${el.text.length > 50 ? "..." : ""}"`;
-        }
-        text += `\n   - CSS Selector: \`${el.selector}\``;
-        if (el.id) text += `\n   - ID: ${el.id}`;
-        if (el.classes) text += `\n   - Classes: ${el.classes}`;
-        if (el.type) text += `\n   - Type: ${el.type}`;
-        if (el.role) text += `\n   - Role: ${el.role}`;
-        text += `\n`;
-      });
+    if (Array.isArray(rawElements) && rawElements.length > 0) {
+      const elements = rawElements as ElementData[];
+      text += formatElementText(elements, true);
     } else {
       text += "No interactive elements found or enumeration not supported.\n";
-      text += "Elements data: " + JSON.stringify(elements);
+      if (rawElements && typeof rawElements === 'object') {
+        text += `Note: Received data of type ${typeof rawElements} - extension may need to implement this handler.\n`;
+      }
     }
 
     return {
@@ -174,8 +212,9 @@ export const teachSelector: Tool = {
   handle: async (context: Context, params) => {
     const validatedParams = TeachSelectorSchema.shape.arguments.parse(params);
 
-    // Store the learned selector
-    learnedSelectors.set(validatedParams.actionDescription.toLowerCase(), {
+    // Store the learned selector using the original description as key
+    // This preserves the user's intended casing and formatting
+    learnedSelectors.set(validatedParams.actionDescription, {
       selector: validatedParams.selector,
       notes: validatedParams.notes,
       timestamp: new Date(),
@@ -258,20 +297,15 @@ export const enhancedSnapshot: Tool = {
     // Optionally include enumerated elements
     if (validatedParams.includeElements) {
       try {
-        const elements = await context.sendSocketMessage(
+        const rawElements = await context.sendSocketMessage(
           "browser_enumerate_elements",
           { includeHidden: false },
         );
 
         let elementsText = "\n## Interactive Elements\n\n";
-        if (Array.isArray(elements) && elements.length > 0) {
-          elements.forEach((el: any, index: number) => {
-            elementsText += `${index + 1}. ${el.tag || "element"}`;
-            if (el.text) {
-              elementsText += ` - "${el.text.substring(0, 50)}${el.text.length > 50 ? "..." : ""}"`;
-            }
-            elementsText += ` (\`${el.selector}\`)\n`;
-          });
+        if (Array.isArray(rawElements) && rawElements.length > 0) {
+          const elements = rawElements as ElementData[];
+          elementsText += formatElementText(elements, false);
         } else {
           elementsText += "No interactive elements found.\n";
         }
